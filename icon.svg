@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-label="Zion Switcher">
+  <defs>
+    <linearGradient id="z" x1="30" y1="30" x2="98" y2="98" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7CFF9E"/>
+      <stop offset="1" stop-color="#66E3FF"/>
+    </linearGradient>
+    <linearGradient id="bg" x1="0" y1="0" x2="128" y2="128" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#101722"/>
+      <stop offset="1" stop-color="#06070A"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="30" fill="url(#bg)"/>
+  <rect x="3" y="3" width="122" height="122" rx="27" fill="none" stroke="#1c2530" stroke-width="2"/>
+  <path d="M34 36 L94 36 L34 92 L94 92" fill="none" stroke="url(#z)" stroke-width="13"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="34" cy="36" r="9" fill="#7CFF9E"/>
+  <circle cx="94" cy="92" r="9" fill="#66E3FF"/>
+</svg>

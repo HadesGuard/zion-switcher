@@ -1,0 +1,109 @@
+{
+  "name": "zion-switcher",
+  "displayName": "Zion Switcher",
+  "description": "One-click switch Claude Code & Codex CLI between your native subscription and any custom gateway (base URL + API key).",
+  "version": "0.1.9",
+  "publisher": "hadesdev",
+  "license": "MIT",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/HadesGuard/zion-switcher.git"
+  },
+  "bugs": {
+    "url": "https://github.com/HadesGuard/zion-switcher/issues"
+  },
+  "homepage": "https://github.com/HadesGuard/zion-switcher#readme",
+  "galleryBanner": {
+    "color": "#0B0F14",
+    "theme": "dark"
+  },
+  "keywords": [
+    "claude",
+    "codex",
+    "llm",
+    "gateway",
+    "proxy"
+  ],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "configuration": {
+      "title": "Zion Switcher",
+      "properties": {
+        "zion.defaultBaseUrl.claude": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Base URL pre-filled when adding a **Claude** endpoint, so you don't retype it. Leave blank to type it each time."
+        },
+        "zion.defaultBaseUrl.codex": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Base URL pre-filled when adding a **Codex** endpoint (usually ends in `/v1`). Leave blank to type it each time."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "zion.switch",
+        "title": "Zion: Switch Login",
+        "category": "Zion"
+      },
+      {
+        "command": "zion.addGatewayProfile",
+        "title": "Zion: Add a Custom Endpoint",
+        "category": "Zion"
+      },
+      {
+        "command": "zion.editProfile",
+        "title": "Zion: Edit a Custom Endpoint",
+        "category": "Zion"
+      },
+      {
+        "command": "zion.deleteProfile",
+        "title": "Zion: Delete a Custom Endpoint",
+        "category": "Zion"
+      },
+      {
+        "command": "zion.captureOriginal",
+        "title": "Zion: Update Backup of My Login",
+        "category": "Zion"
+      },
+      {
+        "command": "zion.openConfigFiles",
+        "title": "Zion: Open Config Files",
+        "category": "Zion"
+      },
+      {
+        "command": "zion.clean",
+        "title": "Zion: Clean Up",
+        "category": "Zion"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "vscode:prepublish": "node esbuild.js --production",
+    "package": "vsce package",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@iarna/toml": "^2.2.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.4.0"
+  }
+}
