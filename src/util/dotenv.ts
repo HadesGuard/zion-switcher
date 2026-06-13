@@ -65,7 +65,12 @@ function matchKey(line: string): KeyMatch | undefined {
   if (eq <= 0) {
     return undefined;
   }
-  return { key: line.slice(0, eq).trim(), value: line.slice(eq + 1).trim() };
+  // Normalize an optional `export ` prefix so `export FOO=x` matches key FOO.
+  const key = line.slice(0, eq).trim().replace(/^export\s+/, "");
+  if (key === "") {
+    return undefined;
+  }
+  return { key, value: line.slice(eq + 1).trim() };
 }
 
 function stripQuotes(v: string): string {

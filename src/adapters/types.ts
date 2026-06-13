@@ -64,6 +64,12 @@ export interface ToolAdapter {
   /** Provider name for a profile (Codex/Open Claw). Required when usesNamedProvider. */
   providerNameFor?(profile: GatewayProfile): string;
   /**
+   * The provider key actually present in the live config right now (Codex TOML
+   * table key, Open Claw active provider). Used when adopting an endpoint the
+   * user was already on, so cleanup targets the real key rather than a fresh slug.
+   */
+  currentProviderName?(ctx: AdapterCtx): string | undefined;
+  /**
    * Resolve the config path when it isn't at a known location (Open Claw). May
    * prompt the user. Returns the resolved path, or undefined if unresolved.
    */

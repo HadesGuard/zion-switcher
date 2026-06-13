@@ -267,6 +267,17 @@ async function applyProfile(tool: Tool, profileId: string): Promise<void> {
     await applyProfileWithSecret(tool, profile, secret);
     await finishSwitch(tool, profileId, store.get(profileId)?.label ?? "");
   } catch (e: any) {
+    // If the switch failed while the tool was previously native, a partial write
+    // could leave the config half-on-the-gateway while the bar still says native.
+    // Best-effort restore so the displayed state matches reality.
+    if (store.getActive(tool) === ORIGINAL_ID) {
+      try {
+        await restoreNativeConfig(tool);
+      } catch {
+        /* leave it; the error below tells the user to check */
+      }
+    }
+    refreshStatusBar();
     vscode.window.showErrorMessage(`Zion: couldn't switch: ${e?.message ?? e}`);
   }
 }
@@ -369,14 +380,20 @@ async function adoptCurrentGatewayAsProfile(tool: Tool): Promise<void> {
     return;
   }
   const id = newId();
+  // For named-provider tools, record the provider key ACTUALLY in the live
+  // config (e.g. the existing config.toml table name), not a fresh slug, so a
+  // later removeGateway can find and strip it. Fall back to a slug only if the
+  // live key can't be read.
+  const providerName = adapter.usesNamedProvider
+    ? adapter.currentProviderName?.(ctxFor(tool)) ??
+      adapter.providerNameFor?.({ id, tool, label: "Imported endpoint", baseUrl })
+    : undefined;
   const profile: GatewayProfile = {
     id,
     tool,
     label: "Imported endpoint",
     baseUrl,
-    providerName: adapter.usesNamedProvider
-      ? adapter.providerNameFor?.({ id, tool, label: "Imported endpoint", baseUrl })
-      : undefined,
+    providerName,
   };
   await store.upsert(profile);
   await store.setActive(tool, id);
@@ -666,6 +683,18 @@ async function recaptureOriginal(): Promise<void> {
   if (!tool) {
     return;
   }
+  // Refuse to snapshot a config that's still on a custom endpoint: doing so would
+  // poison the backup (a later "switch back to native" would restore TO the
+  // gateway) and flip the status bar to native while the config still routes out.
+  // This mirrors the auto guard in captureOnFirstRun, since judging config state
+  // is exactly what users can't do reliably.
+  if (getAdapter(tool).isOnGateway(ctxFor(tool))) {
+    vscode.window.showWarningMessage(
+      `${TOOL_LABELS[tool]} still looks like it's pointed at a custom endpoint, not your own login. ` +
+        `Switch it back to your own login first, then update the backup.`
+    );
+    return;
+  }
   const confirm = await vscode.window.showWarningMessage(
     `Save the current ${TOOL_LABELS[tool]} login as your new "Native login" backup? ` +
       `Only do this when ${TOOL_LABELS[tool]} is on your own account right now, not a custom endpoint.`,
@@ -752,35 +781,50 @@ async function cleanReset(): Promise<void> {
   // Always: switch the chosen tools back to native. Go through the full restore
   // path (Codex re-applies its OAuth login, Open Claw/Hermes restore verbatim)
   // rather than a raw removeGateway, so config AND auth end up actually native.
-  const switched: string[] = [];
+  const switched: Tool[] = [];
+  const failed: Tool[] = [];
   for (const tool of tools) {
     try {
       await restoreNativeConfig(tool);
       await store.setActive(tool, ORIGINAL_ID);
-      switched.push(TOOL_LABELS[tool]);
+      switched.push(tool);
     } catch (e: any) {
+      failed.push(tool);
       vscode.window.showErrorMessage(
         `Zion: couldn't restore ${TOOL_LABELS[tool]} to native: ${e?.message ?? e}`
       );
     }
   }
   if (switched.length) {
-    done.push(`switched back to your own login (${switched.join(", ")})`);
+    done.push(`switched back to your own login (${switched.map((t) => TOOL_LABELS[t]).join(", ")})`);
   }
 
   if (doEverything) {
+    // Only erase for tools we actually restored. Wiping a failed tool's snapshot
+    // + backups would leave it on the gateway with no recovery path, and flipping
+    // its active state to native (via clearForTool) would lie about the routing.
     let n = 0;
-    for (const tool of tools) {
+    for (const tool of switched) {
       await store.clearForTool(tool);
       forgetOriginal(extContext, tool);
       n += purgeBackups(extContext, tool);
       await store.clearOwnedProviders(tool);
+      // Re-arm the first-run prompt so a future launch can recapture a correct
+      // native backup; otherwise the stale flag suppresses it after a reset.
+      await extContext.globalState.update(`zion.firstRunAsked.${tool}`, undefined);
     }
-    done.push(`erased ${toolList} endpoints, keys, and ${n} backup file(s)`);
+    if (switched.length) {
+      done.push(`erased ${switched.map((t) => TOOL_LABELS[t]).join(", ")} endpoints, keys, and ${n} backup file(s)`);
+    }
+    if (failed.length) {
+      done.push(`kept ${failed.map((t) => TOOL_LABELS[t]).join(", ")} (still on the gateway, backup preserved)`);
+    }
   }
 
   refreshStatusBar();
-  vscode.window.showInformationMessage(`Zion: ${done.join("; ")}.`);
+  if (done.length) {
+    vscode.window.showInformationMessage(`Zion: ${done.join("; ")}.`);
+  }
 }
 
 // ---------------------------------------------------------------------------

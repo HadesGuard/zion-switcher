@@ -23,6 +23,10 @@ export const codexAdapter: ToolAdapter = {
     return profile.providerName || slugProvider(profile.label, profile.id);
   },
 
+  currentProviderName() {
+    return manager.currentProviderName();
+  },
+
   applyGateway(input: ApplyInput) {
     const providerName =
       input.profile.providerName || slugProvider(input.profile.label, input.profile.id);
@@ -48,19 +52,23 @@ export const codexAdapter: ToolAdapter = {
    * strip our provider + key and fall back to whatever login remains.
    */
   async restoreNative(ctx: AdapterCtx) {
-    const ownedNames = ctx.ownedProviders;
     const snapConfig = readSnapshot(ctx.context, "codex", "config.toml");
     const snapAuth = readSnapshot(ctx.context, "codex", "auth.json");
-    const snapshotIsGateway =
-      snapConfig !== undefined && manager.isGatewayConfigText(snapConfig, ownedNames);
-    const snapshotHasLogin = snapAuth !== undefined && /"tokens"\s*:/.test(snapAuth);
 
-    if (isOriginalCaptured(ctx.context, "codex") && !snapshotIsGateway && snapshotHasLogin) {
+    // Only restore the verbatim snapshot when it positively looks like a real
+    // native ChatGPT login (OAuth tokens, not api-key mode, no gateway key,
+    // model_provider openai/unset). Deciding from content rather than the
+    // owned-provider list avoids restoring a captured gateway config as "native"
+    // when the owned list is empty/stale (e.g. first-run "this is my own login").
+    if (
+      isOriginalCaptured(ctx.context, "codex") &&
+      manager.snapshotIsNativeLogin(snapConfig, snapAuth)
+    ) {
       restoreOriginal(ctx.context, "codex");
       return;
     }
 
-    manager.removeGateway(ownedNames);
+    manager.removeGateway(ctx.ownedProviders);
     manager.clearApiKey();
     if (!manager.hasNativeLogin()) {
       vscode.window.showWarningMessage(

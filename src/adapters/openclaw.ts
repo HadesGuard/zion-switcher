@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
-import { backupFile } from "../backup";
+import { backupFile, isOriginalCaptured, restoreOriginal } from "../backup";
 import { slugProvider } from "../util/slug";
 import { ApplyInput, AdapterCtx, ToolAdapter } from "./types";
 
@@ -81,6 +81,19 @@ export const openclawAdapter: ToolAdapter = {
 
   providerNameFor(profile) {
     return profile.providerName || slugProvider(profile.label, profile.id);
+  },
+
+  currentProviderName(ctx) {
+    const file = knownPath(ctx);
+    if (!file || !fs.existsSync(file)) {
+      return undefined;
+    }
+    try {
+      const active = primary(readJson(file));
+      return active ? active.split("/")[0] : undefined;
+    } catch {
+      return undefined;
+    }
   },
 
   files(ctx) {
@@ -167,6 +180,18 @@ export const openclawAdapter: ToolAdapter = {
       writeJson(file, data);
     }
     return changed;
+  },
+
+  // Open Claw has no separate OAuth store: native is whatever the file held
+  // before. Restore the verbatim snapshot when one was captured, otherwise just
+  // strip our gateway provider so we never leave the gateway block behind even
+  // if no snapshot exists (e.g. the path was unresolved at first run).
+  async restoreNative(ctx: AdapterCtx) {
+    if (isOriginalCaptured(ctx.context, "openclaw")) {
+      restoreOriginal(ctx.context, "openclaw");
+      return;
+    }
+    openclawAdapter.removeGateway(ctx);
   },
 
   isOnGateway(ctx: AdapterCtx) {

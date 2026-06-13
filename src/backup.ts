@@ -82,9 +82,18 @@ export function isOriginalCaptured(context: vscode.ExtensionContext, tool: Tool)
  * (so restore can delete a file that originally wasn't there).
  */
 export async function captureOriginal(context: vscode.ExtensionContext, tool: Tool): Promise<void> {
+  const files = toolFiles(tool, context);
+  // No files to snapshot (e.g. an unresolved-path tool like Open Claw before its
+  // config location is known). Do NOT mark captured: a true flag with an empty
+  // snapshot makes a later "restore" a silent no-op while the UI claims native.
+  // Leaving it false lets restoreNativeConfig fall back to removeGateway and lets
+  // capture retry once a real config exists.
+  if (files.length === 0) {
+    return;
+  }
   const destDir = originalsDir(context, tool);
   fs.mkdirSync(destDir, { recursive: true });
-  for (const src of toolFiles(tool, context)) {
+  for (const src of files) {
     const name = path.basename(src);
     const snap = path.join(destDir, name);
     const marker = `${snap}.absent`;

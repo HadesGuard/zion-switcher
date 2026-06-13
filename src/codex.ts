@@ -135,6 +135,43 @@ export class CodexConfigManager {
   }
 
   /**
+   * Decide from snapshot CONTENT alone whether it captures a genuine native
+   * ChatGPT login (not a gateway), independent of the owned-provider list (which
+   * can be empty/stale). A real native login has an OAuth `tokens` block, is NOT
+   * in api-key mode, carries no OPENAI_API_KEY, and its model_provider is openai
+   * or unset. Returns false when any gateway signal is present.
+   */
+  snapshotIsNativeLogin(configText: string | undefined, authText: string | undefined): boolean {
+    if (authText === undefined) {
+      return false;
+    }
+    let auth: Record<string, any>;
+    try {
+      auth = JSON.parse(authText);
+    } catch {
+      return false;
+    }
+    const hasTokens = auth.tokens != null && typeof auth.tokens === "object";
+    if (!hasTokens) {
+      return false;
+    }
+    if (auth.auth_mode === "apikey" || auth.OPENAI_API_KEY) {
+      return false; // gateway api-key signal
+    }
+    if (configText !== undefined) {
+      try {
+        const cfg = TOML.parse(configText) as Record<string, any>;
+        if (typeof cfg.model_provider === "string" && cfg.model_provider !== "openai") {
+          return false; // pointed at a custom provider
+        }
+      } catch {
+        /* unparseable config: rely on the auth signals above */
+      }
+    }
+    return true;
+  }
+
+  /**
    * True if config.toml currently points Codex at a custom provider, i.e.
    * `model_provider` is set to anything other than the built-in "openai".
    * Used at first run to spot a config that was already on a gateway.
@@ -165,6 +202,19 @@ export class CodexConfigManager {
       const providers = cfg.model_providers as Record<string, any> | undefined;
       const url = providers?.[active]?.base_url;
       return typeof url === "string" && url ? url : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** The active provider table key in config.toml (when not the built-in openai). */
+  currentProviderName(): string | undefined {
+    if (!fs.existsSync(this.configFile)) {
+      return undefined;
+    }
+    try {
+      const active = this.readToml().model_provider;
+      return typeof active === "string" && active !== "openai" ? active : undefined;
     } catch {
       return undefined;
     }

@@ -10,6 +10,7 @@ import { ApplyInput, AdapterCtx, ToolAdapter } from "./types";
 // OPENAI_API_KEY; if Hermes ever reads a different name this is the one knob.
 const ENV_KEY = "OPENAI_API_KEY";
 const CUSTOM_PROVIDER = "custom";
+const PATH_KEY = "zion.path.hermes"; // persisted resolved config path
 
 /** Hermes config dir: %LOCALAPPDATA%\hermes on Windows, ~/.hermes elsewhere. */
 function hermesDir(): string {
@@ -19,12 +20,25 @@ function hermesDir(): string {
   return path.join(os.homedir(), ".hermes");
 }
 
-/** The YAML config file: prefer an existing cli-config.yaml / config.yaml, else default. */
-function configPath(): string {
+/**
+ * The YAML config file. Resolves to a persisted path first so capture and
+ * restore always agree on one filename; otherwise picks the first existing
+ * candidate, else defaults to cli-config.yaml. When ctx is given and a concrete
+ * file exists, the choice is persisted so it can't drift between launches.
+ */
+function configPath(ctx?: AdapterCtx): string {
   const dir = hermesDir();
+  const saved = ctx?.context.globalState.get<string>(PATH_KEY);
+  if (saved && fs.existsSync(saved)) {
+    return saved;
+  }
   const names = ["cli-config.yaml", "config.yaml", "cli-config.yml", "config.yml"];
   const existing = names.map((n) => path.join(dir, n)).find((p) => fs.existsSync(p));
-  return existing ?? path.join(dir, "cli-config.yaml");
+  const resolved = existing ?? path.join(dir, "cli-config.yaml");
+  if (ctx && existing) {
+    void ctx.context.globalState.update(PATH_KEY, resolved);
+  }
+  return resolved;
 }
 
 function envPath(): string {
@@ -74,13 +88,13 @@ export const hermesAdapter: ToolAdapter = {
   cliName: "Hermes",
   secretLabel: "API key",
 
-  files() {
-    return [configPath(), envPath()];
+  files(ctx) {
+    return [configPath(ctx), envPath()];
   },
 
-  applyGateway(input: ApplyInput) {
+  applyGateway(input: ApplyInput, ctx: AdapterCtx) {
     // YAML: provider=custom + base_url.
-    const cfgFile = configPath();
+    const cfgFile = configPath(ctx);
     const data = readYaml(cfgFile);
     const model = modelBlock(data);
     model.provider = CUSTOM_PROVIDER;
@@ -93,10 +107,10 @@ export const hermesAdapter: ToolAdapter = {
     writeEnvText(envFile, text);
   },
 
-  removeGateway() {
+  removeGateway(ctx: AdapterCtx) {
     let changed = false;
 
-    const cfgFile = configPath();
+    const cfgFile = configPath(ctx);
     if (fs.existsSync(cfgFile)) {
       const data = readYaml(cfgFile);
       const model = data.model;
@@ -127,8 +141,8 @@ export const hermesAdapter: ToolAdapter = {
     return changed;
   },
 
-  isOnGateway() {
-    const cfgFile = configPath();
+  isOnGateway(ctx: AdapterCtx) {
+    const cfgFile = configPath(ctx);
     if (!fs.existsSync(cfgFile)) {
       return false;
     }
@@ -140,8 +154,8 @@ export const hermesAdapter: ToolAdapter = {
     }
   },
 
-  currentBaseUrl() {
-    const cfgFile = configPath();
+  currentBaseUrl(ctx: AdapterCtx) {
+    const cfgFile = configPath(ctx);
     if (!fs.existsSync(cfgFile)) {
       return undefined;
     }
