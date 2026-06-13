@@ -2,7 +2,7 @@
   "name": "zion-switcher",
   "displayName": "Zion Switcher",
   "description": "One-click switch your AI coding CLIs (Claude Code, Codex, Open Claw, Hermes) between your own login and any custom gateway. No hand-editing config files.",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "publisher": "hadesdev",
   "license": "MIT",
   "icon": "icon.png",

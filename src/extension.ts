@@ -26,6 +26,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   extContext = context;
   store = new ProfileStore(context);
 
+  // One-time cleanup: collapse duplicate imported endpoints from an earlier bug.
+  await store.dedupeProfiles();
+
   // Capture pristine originals on first run so the first switch is reversible.
   // If a tool's config already points at a custom endpoint, don't blindly save
   // that as the "native" backup: ask the user first.
@@ -296,6 +299,14 @@ async function captureOnFirstRun(tool: Tool): Promise<void> {
     return;
   }
 
+  // Only ask once per tool, even if the user dismisses or picks "custom": set
+  // the flag up front so reopening VS Code doesn't pester them every launch.
+  const askedKey = `zion.firstRunAsked.${tool}`;
+  if (extContext.globalState.get<boolean>(askedKey, false)) {
+    return;
+  }
+  await extContext.globalState.update(askedKey, true);
+
   const name = TOOL_LABELS[tool];
   const choice = await vscode.window.showWarningMessage(
     `${name} is already pointed at a custom endpoint, not your own login. ` +
@@ -321,7 +332,7 @@ async function captureOnFirstRun(tool: Tool): Promise<void> {
     return;
   }
 
-  // Dismissed: leave uncaptured so we ask again next launch.
+  // Dismissed: already flagged above, so we won't ask again.
 }
 
 /**
@@ -335,6 +346,12 @@ async function adoptCurrentGatewayAsProfile(tool: Tool): Promise<void> {
   const adapter = getAdapter(tool);
   const baseUrl = adapter.currentBaseUrl(ctxFor(tool));
   if (!baseUrl) {
+    return;
+  }
+  // If we already saved this endpoint, just point at it instead of duplicating.
+  const existing = store.findByToolAndUrl(tool, baseUrl);
+  if (existing) {
+    await store.setActive(tool, existing.id);
     return;
   }
   const id = newId();
