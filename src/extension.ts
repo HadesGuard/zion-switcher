@@ -75,14 +75,17 @@ function refreshStatusBar(): void {
   if (onGateway.length === 0) {
     // All native: stay compact and quiet.
     statusBar.text = "$(home) Zion $(chevron-down)";
-    statusBar.tooltip = "Claude & Codex are using your own login. Click to switch (Zion Switcher)";
+    statusBar.tooltip = `All ${TOOLS.length} tools are using your own login. Click to switch (Zion Switcher)`;
     statusBar.backgroundColor = undefined;
     return;
   }
 
-  // At least one tool routed through a gateway: surface it and warn.
-  const parts = TOOLS.map((t) => `${TOOL_LABELS[t]}: ${store.activeLabel(t)}`);
-  statusBar.text = `$(rocket) ${parts.join(" · ")} $(chevron-down)`;
+  // At least one tool routed through a gateway: surface only the routed ones
+  // (native tools are just a count) so the line stays bounded as tools grow.
+  const routed = onGateway.map((t) => `${TOOL_LABELS[t]}: ${store.activeLabel(t)}`).join(" · ");
+  const nativeCount = TOOLS.length - onGateway.length;
+  const nativeSuffix = nativeCount > 0 ? ` · +${nativeCount} native` : "";
+  statusBar.text = `$(rocket) ${routed}${nativeSuffix} $(chevron-down)`;
   statusBar.tooltip = `Using a custom endpoint: ${onGateway
     .map((t) => `${TOOL_LABELS[t]} → ${store.activeLabel(t)}`)
     .join(", ")}. Click to switch (Zion Switcher).`;
@@ -125,7 +128,7 @@ function buildSwitchItems(): vscode.QuickPickItem[] {
     // Original entry.
     items.push(<SwitchItem>{
       label: active === ORIGINAL_ID ? `$(check) Native login` : `$(home) Native login`,
-      description: "your own Claude/ChatGPT account",
+      description: `${TOOL_LABELS[tool]} · your own account`,
       tool,
       profileId: ORIGINAL_ID,
       action: "apply",
@@ -163,9 +166,10 @@ function buildSwitchItems(): vscode.QuickPickItem[] {
 
 async function switchProfile(): Promise<void> {
   const qp = vscode.window.createQuickPick<vscode.QuickPickItem>();
-  qp.title = "Switch Claude / Codex login";
-  qp.placeholder = "Pick where Claude or Codex should connect, or add your own";
+  qp.title = "Switch login";
+  qp.placeholder = "Pick where each tool should connect, or add your own";
   qp.matchOnDetail = true;
+  qp.matchOnDescription = true;
   qp.items = buildSwitchItems();
 
   const done = new Promise<void>((resolve) => {
@@ -705,7 +709,7 @@ async function cleanReset(): Promise<void> {
   // endpoints, keys, the original-login backup, and the dated backup files.
   const doEverything = picked.id === "everything";
 
-  const toolList = tools.map((t) => TOOL_LABELS[t]).join(" & ");
+  const toolList = tools.map((t) => TOOL_LABELS[t]).join(", ");
   const confirm = await vscode.window.showWarningMessage(
     `${picked.label.replace(/^\$\([^)]+\)\s*/, "")} (${toolList})?\n\n${picked.detail}`,
     { modal: true },
