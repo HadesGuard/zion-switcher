@@ -9,7 +9,7 @@ import { codexAuthPath, codexConfigPath } from "./paths";
  *
  * NOTE: @iarna/toml does not preserve comments or key ordering on rewrite. Every
  * write is preceded by a timestamped backup, and the verbatim "original" snapshot
- * is what gets restored when switching back — so the round-trip is lossless where
+ * is what gets restored when switching back, so the round-trip is lossless where
  * it matters (restore), lossy only on the gateway-config we generate ourselves.
  */
 export class CodexConfigManager {

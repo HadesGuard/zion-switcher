@@ -50,7 +50,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   refreshStatusBar();
   statusBar.show();
 
-  // First-run welcome — shown once after the initial snapshot is taken.
+  // First-run welcome, shown once after the initial snapshot is taken.
   if (!context.globalState.get<boolean>(WELCOME_KEY, false)) {
     await context.globalState.update(WELCOME_KEY, true);
     vscode.window.showInformationMessage(
@@ -77,14 +77,14 @@ function refreshStatusBar(): void {
   const onGateway = TOOLS.filter((t) => store.getActive(t) !== ORIGINAL_ID);
 
   if (onGateway.length === 0) {
-    // All native — stay compact and quiet.
+    // All native: stay compact and quiet.
     statusBar.text = "$(home) Zion $(chevron-down)";
-    statusBar.tooltip = "Claude & Codex are using your own login — click to switch (Zion Switcher)";
+    statusBar.tooltip = "Claude & Codex are using your own login. Click to switch (Zion Switcher)";
     statusBar.backgroundColor = undefined;
     return;
   }
 
-  // At least one tool routed through a gateway — surface it and warn.
+  // At least one tool routed through a gateway: surface it and warn.
   const parts = TOOLS.map((t) => `${TOOL_LABELS[t]}: ${store.activeLabel(t)}`);
   statusBar.text = `$(rocket) ${parts.join(" · ")} $(chevron-down)`;
   statusBar.tooltip = `Using a custom endpoint: ${onGateway
@@ -134,7 +134,7 @@ function buildSwitchItems(): vscode.QuickPickItem[] {
       profileId: ORIGINAL_ID,
       action: "apply",
     });
-    // Gateway profiles — each carries inline edit/delete buttons.
+    // Gateway profiles, each carries inline edit/delete buttons.
     for (const p of store.listForTool(tool)) {
       items.push(<SwitchItem>{
         label: active === p.id ? `$(check) ${p.label}` : `$(rocket) ${p.label}`,
@@ -261,20 +261,20 @@ async function applyProfile(tool: Tool, profileId: string): Promise<void> {
     await applyProfileWithSecret(tool, profile, secret);
     await finishSwitch(tool, profileId, store.get(profileId)?.label ?? "");
   } catch (e: any) {
-    vscode.window.showErrorMessage(`Zion: couldn't switch — ${e?.message ?? e}`);
+    vscode.window.showErrorMessage(`Zion: couldn't switch: ${e?.message ?? e}`);
   }
 }
 
 /**
  * Switch a tool back to its native (non-gateway) login.
  *
- * Claude: native login lives in the OS keychain, not settings.json — so we just
+ * Claude: native login lives in the OS keychain, not settings.json, so we just
  * strip the ANTHROPIC_* env keys this extension wrote. Always correct, never
  * depends on a snapshot.
  *
  * Codex: native login is a ChatGPT OAuth token block in auth.json. Prefer
  * restoring the verbatim snapshot when it holds a real login (and isn't itself a
- * gateway config we captured by mistake) — that brings the OAuth token back so
+ * gateway config we captured by mistake), which brings the OAuth token back so
  * the user doesn't have to re-login. Otherwise strip the api-key fields and fall
  * back to whatever login remains, telling the user to `codex login` if none.
  */
@@ -457,7 +457,7 @@ async function addOrEditProfile(
           );
         } catch (e: any) {
           vscode.window.showErrorMessage(
-            `Zion: re-apply failed — ${e?.message ?? e}`
+            `Zion: re-apply failed: ${e?.message ?? e}`
           );
         }
       }
@@ -514,7 +514,7 @@ async function deleteProfileById(profile: GatewayProfile): Promise<void> {
           await restoreNative(tool);
         } catch (e: any) {
           vscode.window.showErrorMessage(
-            `Zion: restore failed for ${TOOL_LABELS[tool]} — ${e?.message ?? e}`
+            `Zion: restore failed for : ${e?.message ?? e}`
           );
         }
       }
@@ -523,7 +523,7 @@ async function deleteProfileById(profile: GatewayProfile): Promise<void> {
       );
     } else {
       vscode.window.showInformationMessage(
-        `Zion: deleted "${profile.label}". Nothing else changed — switch whenever you're ready.`
+        `Zion: deleted "${profile.label}". Nothing else changed. Switch whenever you're ready.`
       );
     }
   } else {
@@ -851,12 +851,12 @@ async function testConnection(
       };
     }
     if (res.status === 401 || res.status === 403) {
-      return { ok: false, detail: `Auth rejected (HTTP ${res.status}) — check the key` };
+      return { ok: false, detail: `Auth rejected (HTTP ). Check the key` };
     }
     return { ok: false, detail: `HTTP ${res.status} ${res.statusText}` };
   } catch (e: any) {
     if (e?.name === "AbortError") {
-      return { ok: false, detail: "Timed out after 10s — check the base URL / network" };
+      return { ok: false, detail: "Timed out after 10s. Check the base URL or network" };
     }
     return { ok: false, detail: e?.message ?? String(e) };
   } finally {
@@ -871,9 +871,9 @@ async function runConnectionTest(tool: Tool, baseUrl: string, secret: string): P
     () => testConnection(tool, baseUrl, secret)
   );
   if (result.ok) {
-    vscode.window.showInformationMessage(`Zion: connection OK — ${result.detail}.`);
+    vscode.window.showInformationMessage(`Zion: connection OK: ${result.detail}.`);
   } else {
-    vscode.window.showErrorMessage(`Zion: connection failed — ${result.detail}.`);
+    vscode.window.showErrorMessage(`Zion: connection failed: ${result.detail}.`);
   }
 }
 

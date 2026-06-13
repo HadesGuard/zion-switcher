@@ -99,7 +99,7 @@ export async function captureOriginal(context: vscode.ExtensionContext, tool: To
   }
   const map = capturedMap(context);
   map[tool] = true;
-  // Await so the "captured" flag is persisted before we return — otherwise a
+  // Await so the "captured" flag is persisted before we return, otherwise a
   // crash right after snapshotting could leave the flag unset and re-capture a
   // gateway config as "native" on next launch.
   await context.globalState.update(CAPTURED_KEY, map);

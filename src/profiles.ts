@@ -3,7 +3,7 @@ import { GatewayProfile, ORIGINAL_ID, Tool } from "./paths";
 
 const PROFILES_KEY = "zion.gatewayProfiles"; // GatewayProfile[]
 const ACTIVE_KEY = "zion.activeProfile"; // Record<Tool, string>  (profile id or ORIGINAL_ID)
-const OWNED_CODEX_KEY = "zion.ownedCodexProviders"; // string[] — TOML provider keys we created
+const OWNED_CODEX_KEY = "zion.ownedCodexProviders"; // string[] of TOML provider keys we created
 
 function secretKey(profileId: string): string {
   return `zion.secret.${profileId}`;
@@ -102,7 +102,7 @@ export class ProfileStore {
   }
 
   /**
-   * Codex provider keys this extension owns in config.toml — the union of the
+   * Codex provider keys this extension owns in config.toml: the union of the
    * durable owned-list and any current profiles. Survives "forget profiles" so
    * a later Clean can still strip stale [model_providers.*] tables.
    */

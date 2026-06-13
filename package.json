@@ -2,7 +2,7 @@
   "name": "zion-switcher",
   "displayName": "Zion Switcher",
   "description": "One-click switch Claude Code & Codex CLI between your native subscription and any custom gateway (base URL + API key).",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "publisher": "hadesdev",
   "license": "MIT",
   "icon": "icon.png",
