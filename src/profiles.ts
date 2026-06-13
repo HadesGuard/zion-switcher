@@ -1,9 +1,11 @@
 import * as vscode from "vscode";
 import { GatewayProfile, ORIGINAL_ID, Tool } from "./paths";
+import { findAdapter } from "./adapters";
 
 const PROFILES_KEY = "zion.gatewayProfiles"; // GatewayProfile[]
 const ACTIVE_KEY = "zion.activeProfile"; // Record<Tool, string>  (profile id or ORIGINAL_ID)
-const OWNED_CODEX_KEY = "zion.ownedCodexProviders"; // string[] of TOML provider keys we created
+const OWNED_CODEX_KEY = "zion.ownedCodexProviders"; // legacy: string[] of codex TOML provider keys
+const OWNED_KEY = "zion.ownedProviders"; // Record<Tool, string[]>  named providers we wrote
 
 function secretKey(profileId: string): string {
   return `zion.secret.${profileId}`;
@@ -37,12 +39,15 @@ export class ProfileStore {
     if (secret !== undefined && secret !== "") {
       await this.context.secrets.store(secretKey(profile.id), secret);
     }
-    // Remember codex provider keys we write into config.toml, so Clean can
-    // strip them even after the profile itself is forgotten.
-    if (profile.tool === "codex" && profile.providerName) {
-      const owned = new Set(this.ownedCodexProviders());
+    // Remember named-provider keys we write into a shared config (Codex TOML,
+    // Open Claw JSON), so Clean can strip them even after the profile is gone.
+    const adapter = findAdapter(profile.tool);
+    if (adapter?.usesNamedProvider && profile.providerName) {
+      const map = this.ownedMap();
+      const owned = new Set(map[profile.tool] ?? []);
       owned.add(profile.providerName);
-      await this.context.globalState.update(OWNED_CODEX_KEY, [...owned]);
+      map[profile.tool] = [...owned];
+      await this.context.globalState.update(OWNED_KEY, map);
     }
   }
 
@@ -96,20 +101,30 @@ export class ProfileStore {
     return this.get(id)?.label ?? "native";
   }
 
-  /** Durable list of codex provider keys we've ever written into config.toml. */
-  ownedCodexProviders(): string[] {
-    return this.context.globalState.get<string[]>(OWNED_CODEX_KEY, []);
+  /**
+   * The per-tool map of named provider keys we've written. Lazily migrates the
+   * legacy codex-only `zion.ownedCodexProviders` string[] into `{ codex: [...] }`.
+   */
+  private ownedMap(): Record<string, string[]> {
+    const map = this.context.globalState.get<Record<string, string[]>>(OWNED_KEY, {});
+    if (!map.codex) {
+      const legacy = this.context.globalState.get<string[]>(OWNED_CODEX_KEY, []);
+      if (legacy.length) {
+        map.codex = [...legacy];
+      }
+    }
+    return map;
   }
 
   /**
-   * Codex provider keys this extension owns in config.toml: the union of the
-   * durable owned-list and any current profiles. Survives "forget profiles" so
-   * a later Clean can still strip stale [model_providers.*] tables.
+   * Named provider keys this extension owns for a tool: the union of the durable
+   * owned-list and current profiles. Survives "forget profiles" so a later Clean
+   * can still strip stale providers from the tool's config.
    */
-  codexProviderNames(): string[] {
-    const names = new Set<string>(this.ownedCodexProviders());
+  ownedProviders(tool: Tool): string[] {
+    const names = new Set<string>(this.ownedMap()[tool] ?? []);
     for (const p of this.list()) {
-      if (p.tool === "codex" && p.providerName) {
+      if (p.tool === tool && p.providerName) {
         names.add(p.providerName);
       }
     }
@@ -134,8 +149,16 @@ export class ProfileStore {
     }
   }
 
-  /** Clear the durable owned-codex-provider list (called by full reset, after config is cleaned). */
-  async clearOwnedCodexProviders(): Promise<void> {
-    await this.context.globalState.update(OWNED_CODEX_KEY, []);
+  /** Clear the durable owned-provider list for a tool (full reset, after config is cleaned). */
+  async clearOwnedProviders(tool: Tool): Promise<void> {
+    const map = this.ownedMap();
+    if (map[tool]) {
+      delete map[tool];
+      await this.context.globalState.update(OWNED_KEY, map);
+    }
+    // Also drop the legacy key when clearing codex, so it can't resurrect.
+    if (tool === "codex") {
+      await this.context.globalState.update(OWNED_CODEX_KEY, []);
+    }
   }
 }

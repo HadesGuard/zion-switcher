@@ -16,6 +16,11 @@ export class CodexConfigManager {
   private readonly configFile = codexConfigPath();
   private readonly authFile = codexAuthPath();
 
+  /** Config files this tool owns (for backup / restore). */
+  files(): string[] {
+    return [this.configFile, this.authFile];
+  }
+
   /**
    * Point Codex at a gateway:
    *  - config.toml: model_provider = <providerName>, upsert [model_providers.<providerName>]

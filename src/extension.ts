@@ -4,21 +4,11 @@ import {
   forgetOriginal,
   isOriginalCaptured,
   purgeBackups,
-  readSnapshot,
   restoreOriginal,
 } from "./backup";
-import { ClaudeConfigManager } from "./claude";
-import { CodexConfigManager } from "./codex";
-import {
-  GatewayProfile,
-  ORIGINAL_ID,
-  Tool,
-  TOOLS,
-  TOOL_LABELS,
-  claudeSettingsPath,
-  codexAuthPath,
-  codexConfigPath,
-} from "./paths";
+import { GatewayProfile, ORIGINAL_ID, Tool } from "./paths";
+import { ADAPTERS, TOOLS, TOOL_LABELS, getAdapter } from "./adapters";
+import { AdapterCtx, ToolAdapter } from "./adapters/types";
 import { ProfileStore } from "./profiles";
 
 let store: ProfileStore;
@@ -27,8 +17,10 @@ let extContext: vscode.ExtensionContext;
 
 const WELCOME_KEY = "zion.welcomeShown";
 
-const claude = new ClaudeConfigManager();
-const codex = new CodexConfigManager();
+/** Build the per-call context an adapter needs (owned provider names for the tool). */
+function ctxFor(tool: Tool): AdapterCtx {
+  return { context: extContext, ownedProviders: store.ownedProviders(tool) };
+}
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   extContext = context;
@@ -152,9 +144,7 @@ function buildSwitchItems(): vscode.QuickPickItem[] {
     // Always-visible affordance to add a custom URL & key for this tool.
     items.push(<SwitchItem>{
       label: `$(add) Add a custom endpoint…`,
-      detail: `Connect ${TOOL_LABELS[tool]} to another service (its address + your ${
-        tool === "claude" ? "token" : "API key"
-      })`,
+      detail: `Connect ${TOOL_LABELS[tool]} to another service (its address + your ${getAdapter(tool).secretLabel})`,
       tool,
       profileId: "",
       action: "add",
@@ -244,7 +234,7 @@ async function applyProfile(tool: Tool, profileId: string): Promise<void> {
     }
     const secret = await store.getSecret(profileId);
     if (!secret) {
-      const what = tool === "claude" ? "token" : "API key";
+      const what = getAdapter(tool).secretLabel;
       const choice = await vscode.window.showWarningMessage(
         `"${profile.label}" doesn't have a ${what} saved yet. Add it now?`,
         "Add it",
@@ -272,48 +262,20 @@ async function applyProfile(tool: Tool, profileId: string): Promise<void> {
 /**
  * Switch a tool back to its native (non-gateway) login.
  *
- * Claude: native login lives in the OS keychain, not settings.json, so we just
- * strip the ANTHROPIC_* env keys this extension wrote. Always correct, never
- * depends on a snapshot.
- *
- * Codex: native login is a ChatGPT OAuth token block in auth.json. Prefer
- * restoring the verbatim snapshot when it holds a real login (and isn't itself a
- * gateway config we captured by mistake), which brings the OAuth token back so
- * the user doesn't have to re-login. Otherwise strip the api-key fields and fall
- * back to whatever login remains, telling the user to `codex login` if none.
+ * Each adapter may provide its own restoreNative (Claude strips env keys; Codex
+ * smart-restores its OAuth snapshot). Tools without one fall back to the generic
+ * flow: restore the verbatim snapshot if captured, else just remove the gateway.
  */
 async function restoreNative(tool: Tool): Promise<void> {
-  if (tool === "claude") {
-    claude.removeGateway();
-    await finishSwitch(tool, ORIGINAL_ID, "native");
-    return;
+  const adapter = getAdapter(tool);
+  if (adapter.restoreNative) {
+    await adapter.restoreNative(ctxFor(tool));
+  } else if (isOriginalCaptured(extContext, tool)) {
+    restoreOriginal(extContext, tool);
+  } else {
+    await adapter.removeGateway(ctxFor(tool));
   }
-
-  // Codex
-  const ownedNames = store.codexProviderNames();
-  const snapConfig = readSnapshot(extContext, "codex", "config.toml");
-  const snapAuth = readSnapshot(extContext, "codex", "auth.json");
-  const snapshotIsGateway =
-    snapConfig !== undefined && codex.isGatewayConfigText(snapConfig, ownedNames);
-  const snapshotHasLogin =
-    snapAuth !== undefined && /"tokens"\s*:/.test(snapAuth);
-
-  if (isOriginalCaptured(extContext, "codex") && !snapshotIsGateway && snapshotHasLogin) {
-    // Trustworthy snapshot with a real OAuth login → restore it verbatim.
-    restoreOriginal(extContext, "codex");
-    await finishSwitch(tool, ORIGINAL_ID, "native");
-    return;
-  }
-
-  // No usable snapshot: strip our gateway provider + api key, leave any remaining login.
-  codex.removeGateway(ownedNames);
-  codex.clearApiKey();
   await finishSwitch(tool, ORIGINAL_ID, "native");
-  if (!codex.hasNativeLogin()) {
-    vscode.window.showWarningMessage(
-      "Zion: Codex is back to native, but you're not signed in. Open a terminal and run `codex login` to sign in with your ChatGPT account."
-    );
-  }
 }
 
 /**
@@ -323,7 +285,7 @@ async function restoreNative(tool: Tool): Promise<void> {
  * guessing.
  */
 async function captureOnFirstRun(tool: Tool): Promise<void> {
-  const onGateway = tool === "claude" ? claude.isOnGateway() : codex.isOnGateway();
+  const onGateway = getAdapter(tool).isOnGateway(ctxFor(tool));
   if (!onGateway) {
     // Looks like your own login (or no config yet): safe to back it up quietly.
     await captureOriginal(extContext, tool);
@@ -366,7 +328,8 @@ async function captureOnFirstRun(tool: Tool): Promise<void> {
  * the user to fill on first use.
  */
 async function adoptCurrentGatewayAsProfile(tool: Tool): Promise<void> {
-  const baseUrl = tool === "claude" ? claude.currentBaseUrl() : codex.currentBaseUrl();
+  const adapter = getAdapter(tool);
+  const baseUrl = adapter.currentBaseUrl(ctxFor(tool));
   if (!baseUrl) {
     return;
   }
@@ -376,7 +339,9 @@ async function adoptCurrentGatewayAsProfile(tool: Tool): Promise<void> {
     tool,
     label: "Imported endpoint",
     baseUrl,
-    providerName: tool === "codex" ? slugProvider("Imported endpoint", id) : undefined,
+    providerName: adapter.usesNamedProvider
+      ? adapter.providerNameFor?.({ id, tool, label: "Imported endpoint", baseUrl })
+      : undefined,
   };
   await store.upsert(profile);
   await store.setActive(tool, id);
@@ -387,18 +352,13 @@ async function applyProfileWithSecret(
   profile: GatewayProfile,
   secret: string
 ): Promise<void> {
-  if (tool === "claude") {
-    claude.applyGateway(profile.baseUrl, secret);
-  } else {
-    const providerName = profile.providerName || slugProvider(profile.label, profile.id);
-    codex.applyGateway(providerName, profile.label, profile.baseUrl, secret);
-  }
+  await getAdapter(tool).applyGateway({ baseUrl: profile.baseUrl, secret, profile }, ctxFor(tool));
 }
 
 async function finishSwitch(tool: Tool, profileId: string, label: string): Promise<void> {
   await store.setActive(tool, profileId);
   refreshStatusBar();
-  const cli = tool === "claude" ? "Claude Code" : "Codex";
+  const cli = getAdapter(tool).cliName;
   const choice = await vscode.window.showInformationMessage(
     `Zion: ${TOOL_LABELS[tool]} → ${label}. To apply: restart ${cli} in your terminal, ` +
       `or reload the window if you run it as a VS Code extension.`,
@@ -422,6 +382,19 @@ async function addOrEditProfile(
     : presetTool ?? (await pickTool("Which tool is this profile for?"));
   if (!tool) {
     return;
+  }
+
+  // Some tools (Open Claw) live at an unknown path; resolve it (may prompt) up
+  // front so applying the profile later has somewhere to write.
+  const resolver = getAdapter(tool).resolvePath;
+  if (resolver) {
+    const resolved = await resolver(ctxFor(tool));
+    if (!resolved) {
+      vscode.window.showWarningMessage(
+        `Zion: couldn't locate the ${TOOL_LABELS[tool]} config file, so there's nowhere to save the endpoint.`
+      );
+      return;
+    }
   }
 
   // Multi-step wizard: label → base URL → secret, with Back support so a cancel
@@ -468,7 +441,7 @@ async function addOrEditProfile(
       baseUrl = r;
       step = 2;
     } else {
-      const what = tool === "claude" ? "auth token" : "API key";
+      const what = getAdapter(tool).secretLabel;
       const r = await inputStep({
         title: `${TOOL_LABELS[tool]} ${what}`,
         step: 3,
@@ -494,15 +467,15 @@ async function addOrEditProfile(
   }
 
   const id = existing?.id ?? newId();
+  const adapter = getAdapter(tool);
   const profile: GatewayProfile = {
     id,
     tool,
     label: label.trim(),
     baseUrl: baseUrl.trim(),
-    providerName:
-      tool === "codex"
-        ? existing?.providerName ?? slugProvider(label.trim(), id)
-        : undefined,
+    providerName: adapter.usesNamedProvider
+      ? existing?.providerName ?? adapter.providerNameFor?.({ id, tool, label: label.trim(), baseUrl: baseUrl.trim() })
+      : undefined,
   };
   await store.upsert(profile, secret === "" ? undefined : secret);
   refreshStatusBar();
@@ -610,7 +583,8 @@ function maskSecret(secret: string): string {
 
 async function viewProfileDetails(profile: GatewayProfile): Promise<void> {
   const secret = await store.getSecret(profile.id);
-  const what = profile.tool === "claude" ? "Auth token" : "API key";
+  const adapter = getAdapter(profile.tool);
+  const what = adapter.secretLabel.charAt(0).toUpperCase() + adapter.secretLabel.slice(1);
 
   type DetailAction = "copy" | "edit" | "test";
   interface DetailItem extends vscode.QuickPickItem {
@@ -622,7 +596,7 @@ async function viewProfileDetails(profile: GatewayProfile): Promise<void> {
     { label: `$(tag) Label`, description: profile.label },
     { label: `$(link) Base URL`, description: profile.baseUrl },
   ];
-  if (profile.tool === "codex" && profile.providerName) {
+  if (adapter.usesNamedProvider && profile.providerName) {
     rows.push({ label: `$(symbol-key) Provider`, description: profile.providerName });
   }
   rows.push({
@@ -676,7 +650,11 @@ async function recaptureOriginal(): Promise<void> {
 }
 
 async function openConfigFiles(): Promise<void> {
-  const files = [claudeSettingsPath(), codexConfigPath(), codexAuthPath()];
+  const files = ADAPTERS.flatMap((a) => a.files(ctxFor(a.id)));
+  if (files.length === 0) {
+    vscode.window.showInformationMessage("Zion: no tool config files found yet.");
+    return;
+  }
   const pick = await vscode.window.showQuickPick(files, {
     title: "Open a config file",
   });
@@ -742,8 +720,7 @@ async function cleanReset(): Promise<void> {
   // Always: switch the chosen tools back to native.
   const switched: string[] = [];
   for (const tool of tools) {
-    const changed =
-      tool === "claude" ? claude.removeGateway() : codex.removeGateway(store.codexProviderNames());
+    const changed = await getAdapter(tool).removeGateway(ctxFor(tool));
     await store.setActive(tool, ORIGINAL_ID);
     switched.push(`${TOOL_LABELS[tool]}: ${changed ? "done" : "already native"}`);
   }
@@ -754,10 +731,8 @@ async function cleanReset(): Promise<void> {
     for (const tool of tools) {
       await store.clearForTool(tool);
       forgetOriginal(extContext, tool);
-      n += purgeBackups(tool);
-    }
-    if (tools.includes("codex")) {
-      await store.clearOwnedCodexProviders();
+      n += purgeBackups(extContext, tool);
+      await store.clearOwnedProviders(tool);
     }
     done.push(`erased ${toolList} endpoints, keys, and ${n} backup file(s)`);
   }
@@ -873,7 +848,7 @@ function inputStep(opts: InputStepOpts): Promise<string | typeof BACK | undefine
 }
 
 function promptSecret(tool: Tool, hint?: string): Thenable<string | undefined> {
-  const what = tool === "claude" ? "auth token" : "API key";
+  const what = getAdapter(tool).secretLabel;
   return vscode.window.showInputBox({
     title: `${TOOL_LABELS[tool]} ${what}`,
     password: true,
@@ -920,12 +895,8 @@ async function testConnection(
   const url = modelsUrl(baseUrl);
   const headers: Record<string, string> = {
     Authorization: `Bearer ${secret}`,
+    ...getAdapter(tool).testHeaders?.(secret),
   };
-  if (tool === "claude") {
-    // Anthropic-style gateways may key off x-api-key instead.
-    headers["x-api-key"] = secret;
-    headers["anthropic-version"] = "2023-06-01";
-  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 10_000);
   try {
@@ -983,12 +954,6 @@ function defaultBaseUrl(tool: Tool): string {
   // No built-in default: the field starts blank and the placeholder shows the
   // expected shape. Set `zion.defaultBaseUrl.*` to pre-fill your own endpoint.
   return "";
-}
-
-function slugProvider(label: string, id: string): string {
-  const slug = label.replace(/[^A-Za-z0-9]+/g, "");
-  const suffix = id.slice(-6);
-  return slug ? `Zion${slug}_${suffix}` : `ZionRouter_${suffix}`;
 }
 
 function newId(): string {

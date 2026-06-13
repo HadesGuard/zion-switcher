@@ -1,8 +1,8 @@
 {
   "name": "zion-switcher",
   "displayName": "Zion Switcher",
-  "description": "One-click switch Claude Code & Codex CLI between your native subscription and any custom gateway (base URL + API key).",
-  "version": "0.1.12",
+  "description": "One-click switch your AI coding CLIs (Claude Code, Codex, Open Claw, Hermes) between your own login and any custom gateway. No hand-editing config files.",
+  "version": "0.2.0",
   "publisher": "hadesdev",
   "license": "MIT",
   "icon": "icon.png",
@@ -21,6 +21,8 @@
   "keywords": [
     "claude",
     "codex",
+    "openclaw",
+    "hermes",
     "llm",
     "gateway",
     "proxy"
@@ -97,9 +99,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@iarna/toml": "^2.2.5"
+    "@iarna/toml": "^2.2.5",
+    "js-yaml": "^4.2.0"
   },
   "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^3.9.2",

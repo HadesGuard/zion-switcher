@@ -84,7 +84,7 @@ export function isOriginalCaptured(context: vscode.ExtensionContext, tool: Tool)
 export async function captureOriginal(context: vscode.ExtensionContext, tool: Tool): Promise<void> {
   const destDir = originalsDir(context, tool);
   fs.mkdirSync(destDir, { recursive: true });
-  for (const src of toolFiles(tool)) {
+  for (const src of toolFiles(tool, context)) {
     const name = path.basename(src);
     const snap = path.join(destDir, name);
     const marker = `${snap}.absent`;
@@ -113,9 +113,9 @@ export async function captureOriginalIfNeeded(context: vscode.ExtensionContext, 
 }
 
 /** Delete all `<config>.zion-bak-*` files this extension wrote for a tool. Returns count removed. */
-export function purgeBackups(tool: Tool): number {
+export function purgeBackups(context: vscode.ExtensionContext, tool: Tool): number {
   let removed = 0;
-  for (const filePath of toolFiles(tool)) {
+  for (const filePath of toolFiles(tool, context)) {
     const dir = path.dirname(filePath);
     const prefix = `${path.basename(filePath)}.zion-bak-`;
     let entries: string[];
@@ -158,7 +158,7 @@ export function restoreOriginal(context: vscode.ExtensionContext, tool: Tool): v
     throw new Error(`No original snapshot captured for ${tool}.`);
   }
   const dir = originalsDir(context, tool);
-  for (const target of toolFiles(tool)) {
+  for (const target of toolFiles(tool, context)) {
     const name = path.basename(target);
     const snap = path.join(dir, name);
     const marker = `${snap}.absent`;

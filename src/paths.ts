@@ -1,14 +1,13 @@
 import * as os from "os";
 import * as path from "path";
+import type * as vscode from "vscode";
 
-export type Tool = "claude" | "codex";
-
-export const TOOLS: Tool[] = ["claude", "codex"];
-
-export const TOOL_LABELS: Record<Tool, string> = {
-  claude: "Claude",
-  codex: "Codex",
-};
+/**
+ * A tool's stable id. Was a strict union; now an open string so new tools are
+ * added purely by registering an adapter (see ./adapters). The ids "claude" and
+ * "codex" are preserved for backward compatibility with stored profiles.
+ */
+export type Tool = string;
 
 /** Sentinel id meaning "your captured original config" for a tool. */
 export const ORIGINAL_ID = "__original__";
@@ -19,7 +18,7 @@ export interface GatewayProfile {
   tool: Tool;
   label: string;
   baseUrl: string;
-  /** For codex: the provider name used as the TOML table key. Defaults to a slug of label. */
+  /** For tools that key providers by name (Codex TOML, Open Claw JSON). */
   providerName?: string;
 }
 
@@ -40,10 +39,16 @@ export function codexAuthPath(): string {
   return path.join(home(), ".codex", "auth.json");
 }
 
-/** All files the extension reads/writes for a given tool. */
-export function toolFiles(tool: Tool): string[] {
-  if (tool === "claude") {
-    return [claudeSettingsPath()];
+/**
+ * All files the extension reads/writes for a given tool. Delegates to the tool's
+ * adapter. Imported lazily to avoid a load-time cycle (adapters import paths).
+ */
+export function toolFiles(tool: Tool, context: vscode.ExtensionContext): string[] {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { findAdapter } = require("./adapters") as typeof import("./adapters");
+  const adapter = findAdapter(tool);
+  if (!adapter) {
+    return [];
   }
-  return [codexConfigPath(), codexAuthPath()];
+  return adapter.files({ context, ownedProviders: [] });
 }

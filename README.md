@@ -1,17 +1,17 @@
 # Zion Switcher
 
-One place to flip **Claude Code** and **Codex CLI** between your **own login** (Claude subscription or ChatGPT) and **any custom endpoint**: a gateway, a self-hosted proxy, or a raw API. No more hand-editing config files.
+One place to flip your AI coding CLIs between your **own login** and **any custom endpoint**: a gateway, a self-hosted proxy, or a raw API. No more hand-editing config files. Supports **Claude Code**, **Codex**, **Open Claw**, and **Hermes Agent**, with more on the way.
 
 ## What it does
 
 Each tool can point at one of:
 
-- **Native login**: a byte-for-byte backup of your config files, taken the first time the extension runs. Switching back brings back exactly what you had, including your native OAuth login (Claude Keychain or Codex ChatGPT token).
+- **Native login**: a byte-for-byte backup of your config files, taken the first time the extension runs. Switching back brings back exactly what you had, including your native OAuth login (Claude Keychain, Codex/Open Claw ChatGPT token, Hermes Nous login).
 - **Custom endpoint**: a `{ name, base URL, token/key }` you save for any OpenAI/Anthropic-compatible service. The token is kept in VS Code **SecretStorage**, never in plain settings.
 
 Save as many endpoints as you like and switch in one click. The status bar shows what's active and turns amber when a tool is on a custom endpoint, so you always know whether you're on your own account. Click it to switch, add, edit, view, test, or clean up.
 
-> After switching, restart the tool for the change to take effect: close and reopen the `claude` / `codex` session in your terminal, or reload the window if you run it as a VS Code extension.
+> After switching, restart the tool for the change to take effect: close and reopen the CLI session in your terminal, or reload the window if you run it as a VS Code extension.
 
 > **Test connection:** when adding an endpoint (or from its view panel) you can probe it. The extension does a `GET <base URL>/v1/models` with your key and reports whether the endpoint is reachable and the key accepted.
 
@@ -19,12 +19,15 @@ Save as many endpoints as you like and switch in one click. The status bar shows
 
 | Tool   | Files touched | Gateway write | Switch back |
 |--------|---------------|---------------|---------|
-| Claude | `~/.claude/settings.json` | sets `env.ANTHROPIC_BASE_URL` + `env.ANTHROPIC_AUTH_TOKEN`; every other key preserved | removes those two keys, so Claude falls back to your keychain login |
-| Codex  | `~/.codex/config.toml`, `~/.codex/auth.json` | sets `model_provider` + `[model_providers.<name>]` (`base_url`, `wire_api = "responses"`) and `auth.json` `OPENAI_API_KEY` (`auth_mode = "apikey"`); other tables preserved | restores your saved login when possible, otherwise clears the API key and prompts `codex login` |
+| Claude Code | `~/.claude/settings.json` | sets `env.ANTHROPIC_BASE_URL` + `env.ANTHROPIC_AUTH_TOKEN`; every other key preserved | removes those two keys, so Claude falls back to your keychain login |
+| Codex  | `~/.codex/config.toml`, `~/.codex/auth.json` | sets `model_provider` + `[model_providers.<name>]` and `auth.json` `OPENAI_API_KEY`; other tables preserved | restores your saved login when possible, otherwise clears the API key and prompts `codex login` |
+| Open Claw | `~/.openclaw/openclaw.json` (located on first use) | adds a `models.providers.<name>` block and points `agents.defaults.model.primary` at it; other keys preserved | restores your config verbatim from the backup |
+| Hermes Agent | `~/.hermes/cli-config.yaml`, `~/.hermes/.env` | sets `model.provider: custom` + `model.base_url`, writes `OPENAI_API_KEY` in `.env`; other keys preserved | restores both files verbatim from the backup |
 
 Every write is preceded by a timestamped backup next to the file (`<file>.zion-bak-<ISO>`, last 10 kept).
 
-> **Note:** `@iarna/toml` does not preserve comments or key ordering when it rewrites `config.toml`. This only affects the gateway config the extension generates. Switching back to **Native login** restores your file verbatim from the backup.
+> **Note:** rewriting TOML/YAML/JSON does not always preserve comments or key ordering. This only affects the gateway config the extension generates. Switching back to **Native login** restores your file verbatim from the backup.
+
 
 ## Commands
 

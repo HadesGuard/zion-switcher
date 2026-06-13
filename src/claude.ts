@@ -10,6 +10,11 @@ import { claudeSettingsPath } from "./paths";
 export class ClaudeConfigManager {
   private readonly file = claudeSettingsPath();
 
+  /** Config files this tool owns (for backup / restore). */
+  files(): string[] {
+    return [this.file];
+  }
+
   /** Point Claude Code at a gateway: set env.ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN. */
   applyGateway(baseUrl: string, token: string): void {
     const data = this.readJson();
