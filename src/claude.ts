@@ -20,6 +20,33 @@ export class ClaudeConfigManager {
     this.writeJson(data);
   }
 
+  /** True if settings.json currently points Claude at a custom endpoint. */
+  isOnGateway(): boolean {
+    if (!fs.existsSync(this.file)) {
+      return false;
+    }
+    try {
+      const env = this.readJson().env;
+      return !!(env && typeof env === "object" && env.ANTHROPIC_BASE_URL);
+    } catch {
+      return false;
+    }
+  }
+
+  /** The base URL Claude is currently pointed at, or undefined if none. */
+  currentBaseUrl(): string | undefined {
+    if (!fs.existsSync(this.file)) {
+      return undefined;
+    }
+    try {
+      const env = this.readJson().env;
+      const url = env && typeof env === "object" ? env.ANTHROPIC_BASE_URL : undefined;
+      return typeof url === "string" && url ? url : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   /**
    * Remove the gateway keys this extension manages from settings.json.
    * Leaves every other setting intact. Returns true if anything changed.

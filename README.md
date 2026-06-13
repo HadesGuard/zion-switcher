@@ -33,11 +33,11 @@ Every write is preceded by a timestamped backup next to the file (`<file>.zion-b
 - **Zion: Edit / Delete a Custom Endpoint**
 - **Zion: Update Backup of My Login**: save the current files as the new "Native login" backup. Use this if you installed the extension *after* your config already pointed at a gateway: set the files back to your own login first, then run it.
 - **Zion: Open Config Files**: quick-open the underlying files.
-- **Zion: Clean Up**: two choices. *Switch everything back to your own login* (keeps your saved endpoints), or *reset everything* (also erases saved endpoints, keys, and all backups, like a fresh install).
+- **Zion: Clean Up**: pick which tools to act on (Claude, Codex, or both), then choose. *Switch back to your own login* (keeps your saved endpoints), or *reset everything* (also erases saved endpoints, keys, and all backups, like a fresh install).
 
 ## First run
 
-On activation the extension quietly backs up your current Claude and Codex configs as their "Native login". If at that moment your files already point at a gateway, run **Update Backup of My Login** once your own login is back in place.
+On activation the extension quietly backs up your current Claude and Codex configs as their "Native login". If a tool is already pointed at a custom endpoint when you install, the extension can't tell what your original login was, so it asks: is this your own login, or a custom endpoint? If you say it's custom, it skips the backup and saves that endpoint to your list instead. Get back on your own login, then run **Update Backup of My Login** so switching back works.
 
 ## Settings
 

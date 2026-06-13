@@ -116,13 +116,22 @@ export class ProfileStore {
     return [...names];
   }
 
-  /** Wipe every profile and secret. Keeps the owned-codex-provider list so Clean still works. */
-  async clearAll(): Promise<void> {
+  /** Wipe profiles and secrets for a single tool; leave the other tool's untouched. */
+  async clearForTool(tool: Tool): Promise<void> {
+    const keep: GatewayProfile[] = [];
     for (const p of this.list()) {
-      await this.context.secrets.delete(secretKey(p.id));
+      if (p.tool === tool) {
+        await this.context.secrets.delete(secretKey(p.id));
+      } else {
+        keep.push(p);
+      }
     }
-    await this.context.globalState.update(PROFILES_KEY, []);
-    await this.context.globalState.update(ACTIVE_KEY, {});
+    await this.context.globalState.update(PROFILES_KEY, keep);
+    const active = this.activeMap();
+    if (active[tool] !== undefined) {
+      delete active[tool];
+      await this.context.globalState.update(ACTIVE_KEY, active);
+    }
   }
 
   /** Clear the durable owned-codex-provider list (called by full reset, after config is cleaned). */

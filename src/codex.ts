@@ -129,6 +129,42 @@ export class CodexConfigManager {
     }
   }
 
+  /**
+   * True if config.toml currently points Codex at a custom provider, i.e.
+   * `model_provider` is set to anything other than the built-in "openai".
+   * Used at first run to spot a config that was already on a gateway.
+   */
+  isOnGateway(): boolean {
+    if (!fs.existsSync(this.configFile)) {
+      return false;
+    }
+    try {
+      const cfg = this.readToml();
+      return typeof cfg.model_provider === "string" && cfg.model_provider !== "openai";
+    } catch {
+      return false;
+    }
+  }
+
+  /** The base URL of the provider Codex is currently set to, or undefined. */
+  currentBaseUrl(): string | undefined {
+    if (!fs.existsSync(this.configFile)) {
+      return undefined;
+    }
+    try {
+      const cfg = this.readToml();
+      const active = cfg.model_provider;
+      if (typeof active !== "string") {
+        return undefined;
+      }
+      const providers = cfg.model_providers as Record<string, any> | undefined;
+      const url = providers?.[active]?.base_url;
+      return typeof url === "string" && url ? url : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   private readToml(): Record<string, any> {
     if (!fs.existsSync(this.configFile)) {
       return {};

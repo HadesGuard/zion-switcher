@@ -1,7 +1,6 @@
 import * as vscode from "vscode";
 import {
   captureOriginal,
-  captureOriginalIfNeeded,
   forgetOriginal,
   isOriginalCaptured,
   purgeBackups,
@@ -36,9 +35,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   store = new ProfileStore(context);
 
   // Capture pristine originals on first run so the first switch is reversible.
+  // If a tool's config already points at a custom endpoint, don't blindly save
+  // that as the "native" backup: ask the user first.
   for (const tool of TOOLS) {
     try {
-      await captureOriginalIfNeeded(context, tool);
+      if (isOriginalCaptured(context, tool)) {
+        continue;
+      }
+      await captureOnFirstRun(tool);
     } catch (e) {
       console.error(`zion: failed to capture original for ${tool}`, e);
     }
@@ -310,6 +314,72 @@ async function restoreNative(tool: Tool): Promise<void> {
       "Zion: Codex is back to native, but you're not signed in. Open a terminal and run `codex login` to sign in with your ChatGPT account."
     );
   }
+}
+
+/**
+ * First-run capture for one tool. If the config already points at a custom
+ * endpoint, the current files are NOT your own login, so saving them as the
+ * "Native login" backup would be wrong. Ask the user what to do instead of
+ * guessing.
+ */
+async function captureOnFirstRun(tool: Tool): Promise<void> {
+  const onGateway = tool === "claude" ? claude.isOnGateway() : codex.isOnGateway();
+  if (!onGateway) {
+    // Looks like your own login (or no config yet): safe to back it up quietly.
+    await captureOriginal(extContext, tool);
+    return;
+  }
+
+  const name = TOOL_LABELS[tool];
+  const choice = await vscode.window.showWarningMessage(
+    `${name} is already pointed at a custom endpoint, not your own login. ` +
+      `Zion can't tell what your original login was. What should the "Native login" backup be?`,
+    { modal: true },
+    "This is my own login",
+    "It's a custom endpoint"
+  );
+
+  if (choice === "This is my own login") {
+    // User insists the current files are their real login: trust them.
+    await captureOriginal(extContext, tool);
+    return;
+  }
+
+  if (choice === "It's a custom endpoint") {
+    // Don't capture. Tell them how to set a correct backup later, and record
+    // the current endpoint as a saved profile so it isn't lost.
+    await adoptCurrentGatewayAsProfile(tool);
+    vscode.window.showInformationMessage(
+      `Zion: skipped the backup for ${name}. When you're back on your own login, run "Zion: Update Backup of My Login" so switching back works.`
+    );
+    return;
+  }
+
+  // Dismissed: leave uncaptured so we ask again next launch.
+}
+
+/**
+ * Save the endpoint a tool is currently using as a gateway profile, so a user
+ * who installed mid-gateway keeps it in the list instead of losing it. Best
+ * effort: reads the base URL from the live config; the secret isn't recoverable
+ * from Claude settings / Codex auth in a portable way, so it's left blank for
+ * the user to fill on first use.
+ */
+async function adoptCurrentGatewayAsProfile(tool: Tool): Promise<void> {
+  const baseUrl = tool === "claude" ? claude.currentBaseUrl() : codex.currentBaseUrl();
+  if (!baseUrl) {
+    return;
+  }
+  const id = newId();
+  const profile: GatewayProfile = {
+    id,
+    tool,
+    label: "Imported endpoint",
+    baseUrl,
+    providerName: tool === "codex" ? slugProvider("Imported endpoint", id) : undefined,
+  };
+  await store.upsert(profile);
+  await store.setActive(tool, id);
 }
 
 async function applyProfileWithSecret(
@@ -628,9 +698,9 @@ async function cleanReset(): Promise<void> {
   const items: CleanItem[] = [
     {
       id: "undo",
-      label: "$(discard) Switch everything back to my own login",
+      label: "$(discard) Switch back to my own login",
       detail:
-        "Put Claude & Codex back on your own account. Your saved endpoints stay, so you can switch again later.",
+        "Put the tool back on your own account. Your saved endpoints stay, so you can switch again later.",
     },
     {
       id: "everything",
@@ -647,12 +717,19 @@ async function cleanReset(): Promise<void> {
     return;
   }
 
+  // Let the user pick which tools to act on (default: both selected).
+  const tools = await pickTools("Clean up which tools?");
+  if (!tools || tools.length === 0) {
+    return;
+  }
+
   // Both options switch back to native; "everything" additionally wipes saved
   // endpoints, keys, the original-login backup, and the dated backup files.
   const doEverything = picked.id === "everything";
 
+  const toolList = tools.map((t) => TOOL_LABELS[t]).join(" & ");
   const confirm = await vscode.window.showWarningMessage(
-    `${picked.label.replace(/^\$\([^)]+\)\s*/, "")}?\n\n${picked.detail}`,
+    `${picked.label.replace(/^\$\([^)]+\)\s*/, "")} (${toolList})?\n\n${picked.detail}`,
     { modal: true },
     "Proceed"
   );
@@ -662,27 +739,27 @@ async function cleanReset(): Promise<void> {
 
   const done: string[] = [];
 
-  // Always: switch both tools back to native.
-  const claudeChanged = claude.removeGateway();
-  const codexChanged = codex.removeGateway(store.codexProviderNames());
-  for (const tool of TOOLS) {
+  // Always: switch the chosen tools back to native.
+  const switched: string[] = [];
+  for (const tool of tools) {
+    const changed =
+      tool === "claude" ? claude.removeGateway() : codex.removeGateway(store.codexProviderNames());
     await store.setActive(tool, ORIGINAL_ID);
+    switched.push(`${TOOL_LABELS[tool]}: ${changed ? "done" : "already native"}`);
   }
-  done.push(
-    `switched back to your own login (Claude: ${claudeChanged ? "done" : "already native"}, Codex: ${
-      codexChanged ? "done" : "already native"
-    })`
-  );
+  done.push(`switched back to your own login (${switched.join(", ")})`);
 
   if (doEverything) {
-    await store.clearAll();
     let n = 0;
-    for (const tool of TOOLS) {
+    for (const tool of tools) {
+      await store.clearForTool(tool);
       forgetOriginal(extContext, tool);
       n += purgeBackups(tool);
     }
-    await store.clearOwnedCodexProviders();
-    done.push(`erased saved endpoints, keys, and ${n} backup file(s)`);
+    if (tools.includes("codex")) {
+      await store.clearOwnedCodexProviders();
+    }
+    done.push(`erased ${toolList} endpoints, keys, and ${n} backup file(s)`);
   }
 
   refreshStatusBar();
@@ -699,6 +776,24 @@ async function pickTool(title: string): Promise<Tool | undefined> {
     { title }
   );
   return pick?.tool;
+}
+
+/** Pick one or more tools. Both are pre-selected so the default is "act on all". */
+async function pickTools(title: string): Promise<Tool[] | undefined> {
+  interface ToolItem extends vscode.QuickPickItem {
+    tool: Tool;
+  }
+  const items: ToolItem[] = TOOLS.map((t) => ({
+    label: TOOL_LABELS[t],
+    tool: t,
+    picked: true,
+  }));
+  const picks = await vscode.window.showQuickPick(items, {
+    title,
+    canPickMany: true,
+    placeHolder: "Space to toggle, Enter to confirm (both selected by default)",
+  });
+  return picks?.map((p) => p.tool);
 }
 
 async function pickGatewayProfile(title: string): Promise<GatewayProfile | undefined> {
