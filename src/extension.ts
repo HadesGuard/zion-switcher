@@ -49,11 +49,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   refreshStatusBar();
   statusBar.show();
 
-  // First-run welcome, shown once after the initial snapshot is taken.
+  // First-run welcome, shown once. Word it as readiness, not a guaranteed
+  // backup: a tool already on a custom endpoint may have no native backup yet
+  // (the user dismissed the prompt or said it's a custom endpoint).
   if (!context.globalState.get<boolean>(WELCOME_KEY, false)) {
+    const allBackedUp = TOOLS.every((t) => isOriginalCaptured(context, t));
     await context.globalState.update(WELCOME_KEY, true);
     vscode.window.showInformationMessage(
-      "Zion Switcher is ready. We've saved a backup of your current login, so you can always switch back. Click 'Zion' in the bottom bar to get started."
+      allBackedUp
+        ? "Zion Switcher is ready. We've backed up your current login, so you can always switch back. Click 'Zion' in the bottom bar to get started."
+        : "Zion Switcher is ready. Click 'Zion' in the bottom bar to switch logins. Tip: for any tool already on a custom endpoint, get back on your own login and run 'Update Backup of My Login' so switching back works."
     );
   }
 
@@ -267,13 +272,14 @@ async function applyProfile(tool: Tool, profileId: string): Promise<void> {
 }
 
 /**
- * Switch a tool back to its native (non-gateway) login.
+ * Put a tool's config files back on the native login WITHOUT any UI side effects.
  *
  * Each adapter may provide its own restoreNative (Claude strips env keys; Codex
  * smart-restores its OAuth snapshot). Tools without one fall back to the generic
  * flow: restore the verbatim snapshot if captured, else just remove the gateway.
+ * This is the real work; callers decide whether to also flip active state / toast.
  */
-async function restoreNative(tool: Tool): Promise<void> {
+async function restoreNativeConfig(tool: Tool): Promise<void> {
   const adapter = getAdapter(tool);
   if (adapter.restoreNative) {
     await adapter.restoreNative(ctxFor(tool));
@@ -282,6 +288,11 @@ async function restoreNative(tool: Tool): Promise<void> {
   } else {
     await adapter.removeGateway(ctxFor(tool));
   }
+}
+
+/** Restore native config AND flip active state + show the switch toast. */
+async function restoreNative(tool: Tool): Promise<void> {
+  await restoreNativeConfig(tool);
   await finishSwitch(tool, ORIGINAL_ID, "native");
 }
 
@@ -299,13 +310,14 @@ async function captureOnFirstRun(tool: Tool): Promise<void> {
     return;
   }
 
-  // Only ask once per tool, even if the user dismisses or picks "custom": set
-  // the flag up front so reopening VS Code doesn't pester them every launch.
+  // Ask once per tool, but only treat an actual choice as "resolved". If the
+  // user dismisses (no decision, no backup yet) we ask again next launch so the
+  // path back to native isn't silently lost. Duplicates are prevented by the
+  // dedupe in adoptCurrentGatewayAsProfile, not by suppressing the prompt.
   const askedKey = `zion.firstRunAsked.${tool}`;
   if (extContext.globalState.get<boolean>(askedKey, false)) {
     return;
   }
-  await extContext.globalState.update(askedKey, true);
 
   const name = TOOL_LABELS[tool];
   const choice = await vscode.window.showWarningMessage(
@@ -318,6 +330,7 @@ async function captureOnFirstRun(tool: Tool): Promise<void> {
 
   if (choice === "This is my own login") {
     // User insists the current files are their real login: trust them.
+    await extContext.globalState.update(askedKey, true);
     await captureOriginal(extContext, tool);
     return;
   }
@@ -325,6 +338,7 @@ async function captureOnFirstRun(tool: Tool): Promise<void> {
   if (choice === "It's a custom endpoint") {
     // Don't capture. Tell them how to set a correct backup later, and record
     // the current endpoint as a saved profile so it isn't lost.
+    await extContext.globalState.update(askedKey, true);
     await adoptCurrentGatewayAsProfile(tool);
     vscode.window.showInformationMessage(
       `Zion: skipped the backup for ${name}. When you're back on your own login, run "Zion: Update Backup of My Login" so switching back works.`
@@ -578,16 +592,13 @@ async function deleteProfileById(profile: GatewayProfile): Promise<void> {
           await restoreNative(tool);
         } catch (e: any) {
           vscode.window.showErrorMessage(
-            `Zion: restore failed for : ${e?.message ?? e}`
+            `Zion: restore failed for ${TOOL_LABELS[tool]}: ${e?.message ?? e}`
           );
         }
       }
-      vscode.window.showInformationMessage(
-        `Zion: deleted "${profile.label}" and switched back to your own login.`
-      );
     } else {
       vscode.window.showInformationMessage(
-        `Zion: deleted "${profile.label}". Nothing else changed. Switch whenever you're ready.`
+        `Zion: deleted "${profile.label}". ${toolList} ${wasActiveFor.length > 1 ? "are" : "is"} still on that endpoint until you switch back.`
       );
     }
   } else {
@@ -738,14 +749,24 @@ async function cleanReset(): Promise<void> {
 
   const done: string[] = [];
 
-  // Always: switch the chosen tools back to native.
+  // Always: switch the chosen tools back to native. Go through the full restore
+  // path (Codex re-applies its OAuth login, Open Claw/Hermes restore verbatim)
+  // rather than a raw removeGateway, so config AND auth end up actually native.
   const switched: string[] = [];
   for (const tool of tools) {
-    const changed = await getAdapter(tool).removeGateway(ctxFor(tool));
-    await store.setActive(tool, ORIGINAL_ID);
-    switched.push(`${TOOL_LABELS[tool]}: ${changed ? "done" : "already native"}`);
+    try {
+      await restoreNativeConfig(tool);
+      await store.setActive(tool, ORIGINAL_ID);
+      switched.push(TOOL_LABELS[tool]);
+    } catch (e: any) {
+      vscode.window.showErrorMessage(
+        `Zion: couldn't restore ${TOOL_LABELS[tool]} to native: ${e?.message ?? e}`
+      );
+    }
   }
-  done.push(`switched back to your own login (${switched.join(", ")})`);
+  if (switched.length) {
+    done.push(`switched back to your own login (${switched.join(", ")})`);
+  }
 
   if (doEverything) {
     let n = 0;
@@ -938,7 +959,7 @@ async function testConnection(
       };
     }
     if (res.status === 401 || res.status === 403) {
-      return { ok: false, detail: `Auth rejected (HTTP ). Check the key` };
+      return { ok: false, detail: `Auth rejected (HTTP ${res.status}). Check the key` };
     }
     return { ok: false, detail: `HTTP ${res.status} ${res.statusText}` };
   } catch (e: any) {
