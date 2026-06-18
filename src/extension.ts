@@ -1,4 +1,6 @@
 import * as vscode from "vscode";
+import * as fs from "fs";
+import * as path from "path";
 import {
   captureOriginal,
   forgetOriginal,
@@ -20,6 +22,38 @@ const WELCOME_KEY = "zion.welcomeShown";
 /** Build the per-call context an adapter needs (owned provider names for the tool). */
 function ctxFor(tool: Tool): AdapterCtx {
   return { context: extContext, ownedProviders: store.ownedProviders(tool) };
+}
+
+/**
+ * Is this tool actually present on the machine? True when any of its config
+ * files exist, or their containing dir does (e.g. ~/.claude exists even if
+ * settings.json doesn't). This is the "has config" signal that decides whether
+ * a tool shows up in the switch menu on its own.
+ */
+function toolDetected(tool: Tool): boolean {
+  const files = getAdapter(tool).files(ctxFor(tool));
+  return files.some((f) => fs.existsSync(f) || fs.existsSync(path.dirname(f)));
+}
+
+/**
+ * Tools to surface in the switch menu: those installed on this machine, plus any
+ * the user has already set up (saved an endpoint for) or is currently routing
+ * through a gateway. Tools that are neither installed nor configured stay hidden
+ * until the user adds them via "Add another tool…".
+ */
+function visibleTools(): Tool[] {
+  return TOOLS.filter(
+    (t) =>
+      toolDetected(t) ||
+      store.listForTool(t).length > 0 ||
+      store.getActive(t) !== ORIGINAL_ID
+  );
+}
+
+/** Supported tools not currently visible (not installed and not configured). */
+function hiddenTools(): Tool[] {
+  const shown = new Set(visibleTools());
+  return TOOLS.filter((t) => !shown.has(t));
 }
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -78,12 +112,19 @@ export function deactivate(): void {
 }
 
 function refreshStatusBar(): void {
-  const onGateway = TOOLS.filter((t) => store.getActive(t) !== ORIGINAL_ID);
+  // Only reason about tools the user actually has (installed or configured);
+  // a hidden, never-set-up tool isn't "on your own login", it's just absent.
+  const visible = visibleTools();
+  const onGateway = visible.filter((t) => store.getActive(t) !== ORIGINAL_ID);
 
   if (onGateway.length === 0) {
-    // All native: stay compact and quiet.
+    // All native (or nothing set up yet): stay compact and quiet.
     statusBar.text = "$(home) Zion $(chevron-down)";
-    statusBar.tooltip = `All ${TOOLS.length} tools are using your own login. Click to switch (Zion Switcher)`;
+    const n = visible.length;
+    statusBar.tooltip =
+      n > 0
+        ? `All ${n} tool${n === 1 ? "" : "s"} are using your own login. Click to switch (Zion Switcher)`
+        : "Click to set up a tool (Zion Switcher)";
     statusBar.backgroundColor = undefined;
     return;
   }
@@ -91,7 +132,7 @@ function refreshStatusBar(): void {
   // At least one tool routed through a gateway: surface only the routed ones
   // (native tools are just a count) so the line stays bounded as tools grow.
   const routed = onGateway.map((t) => `${TOOL_LABELS[t]}: ${store.activeLabel(t)}`).join(" · ");
-  const nativeCount = TOOLS.length - onGateway.length;
+  const nativeCount = visible.length - onGateway.length;
   const nativeSuffix = nativeCount > 0 ? ` · +${nativeCount} native` : "";
   statusBar.text = `$(rocket) ${routed}${nativeSuffix} $(chevron-down)`;
   statusBar.tooltip = `Using a custom endpoint: ${onGateway
@@ -104,7 +145,7 @@ function refreshStatusBar(): void {
 // Switch
 // ---------------------------------------------------------------------------
 
-type SwitchAction = "apply" | "add" | "clean";
+type SwitchAction = "apply" | "add" | "addTool" | "clean";
 
 interface SwitchItem extends vscode.QuickPickItem {
   tool: Tool;
@@ -127,7 +168,7 @@ const DELETE_BUTTON: vscode.QuickInputButton = {
 
 function buildSwitchItems(): vscode.QuickPickItem[] {
   const items: vscode.QuickPickItem[] = [];
-  for (const tool of TOOLS) {
+  for (const tool of visibleTools()) {
     const active = store.getActive(tool);
     items.push({
       label: TOOL_LABELS[tool],
@@ -161,8 +202,17 @@ function buildSwitchItems(): vscode.QuickPickItem[] {
       action: "add",
     });
   }
-  // Footer: clean / reset.
+  // Footer: add another supported tool (the ones not shown above), then clean / reset.
   items.push({ label: "", kind: vscode.QuickPickItemKind.Separator });
+  const hidden = hiddenTools();
+  if (hidden.length > 0) {
+    items.push(<SwitchItem>{
+      label: `$(add) Add another tool…`,
+      detail: `Set up ${hidden.map((t) => TOOL_LABELS[t]).join(", ")}`,
+      profileId: "",
+      action: "addTool",
+    });
+  }
   items.push(<SwitchItem>{
     label: `$(trash) Clean up…`,
     detail: "Undo changes this extension made, remove backups, or forget saved endpoints",
@@ -211,6 +261,11 @@ async function switchProfile(): Promise<void> {
       }
       if (item.action === "clean") {
         await cleanReset();
+        resolve();
+        return;
+      }
+      if (item.action === "addTool") {
+        await addAnotherTool();
         resolve();
         return;
       }
@@ -424,6 +479,35 @@ async function finishSwitch(tool: Tool, profileId: string, label: string): Promi
 // ---------------------------------------------------------------------------
 // Add / edit / delete
 // ---------------------------------------------------------------------------
+
+/**
+ * Pick one of the not-yet-shown tools and start setting it up. Used by the
+ * "Add another tool…" entry so tools that aren't installed/configured stay out
+ * of the main list but are still one click away. Saving an endpoint (or applying
+ * it) makes the tool appear in the switch menu from then on.
+ */
+async function addAnotherTool(): Promise<void> {
+  const hidden = hiddenTools();
+  if (hidden.length === 0) {
+    vscode.window.showInformationMessage("Zion: every supported tool is already in your list.");
+    return;
+  }
+  interface ToolPick extends vscode.QuickPickItem {
+    tool: Tool;
+  }
+  const pick = await vscode.window.showQuickPick<ToolPick>(
+    hidden.map((t) => ({
+      label: TOOL_LABELS[t],
+      description: "not set up yet",
+      detail: `Connect ${TOOL_LABELS[t]} to a custom endpoint`,
+      tool: t,
+    })),
+    { title: "Add another tool", placeHolder: "Pick a tool to set up" }
+  );
+  if (pick) {
+    await addOrEditProfile(undefined, pick.tool);
+  }
+}
 
 async function addOrEditProfile(
   existing?: GatewayProfile,
@@ -679,7 +763,15 @@ async function viewProfileDetails(profile: GatewayProfile): Promise<void> {
 }
 
 async function recaptureOriginal(): Promise<void> {
-  const tool = await pickTool("Update the backup of your own login for which tool?");
+  // Only offer tools that actually have a config to snapshot.
+  const candidates = TOOLS.filter(toolDetected);
+  if (candidates.length === 0) {
+    vscode.window.showInformationMessage(
+      "Zion: no tool config found yet, so there's nothing to back up."
+    );
+    return;
+  }
+  const tool = await pickTool("Update the backup of your own login for which tool?", candidates);
   if (!tool) {
     return;
   }
@@ -711,7 +803,8 @@ async function recaptureOriginal(): Promise<void> {
 }
 
 async function openConfigFiles(): Promise<void> {
-  const files = ADAPTERS.flatMap((a) => a.files(ctxFor(a.id)));
+  // Only list files that exist, so unconfigured tools don't offer phantom paths.
+  const files = ADAPTERS.flatMap((a) => a.files(ctxFor(a.id))).filter((f) => fs.existsSync(f));
   if (files.length === 0) {
     vscode.window.showInformationMessage("Zion: no tool config files found yet.");
     return;
@@ -756,8 +849,13 @@ async function cleanReset(): Promise<void> {
     return;
   }
 
-  // Let the user pick which tools to act on (default: both selected).
-  const tools = await pickTools("Clean up which tools?");
+  // Let the user pick which tools to act on (only the ones in their list).
+  const candidates = visibleTools();
+  if (candidates.length === 0) {
+    vscode.window.showInformationMessage("Zion: nothing to clean up yet.");
+    return;
+  }
+  const tools = await pickTools("Clean up which tools?", candidates);
   if (!tools || tools.length === 0) {
     return;
   }
@@ -831,20 +929,23 @@ async function cleanReset(): Promise<void> {
 // Helpers
 // ---------------------------------------------------------------------------
 
-async function pickTool(title: string): Promise<Tool | undefined> {
+async function pickTool(title: string, candidates: Tool[] = TOOLS): Promise<Tool | undefined> {
   const pick = await vscode.window.showQuickPick(
-    TOOLS.map((t) => ({ label: TOOL_LABELS[t], tool: t })),
+    candidates.map((t) => ({ label: TOOL_LABELS[t], tool: t })),
     { title }
   );
   return pick?.tool;
 }
 
-/** Pick one or more tools. Both are pre-selected so the default is "act on all". */
-async function pickTools(title: string): Promise<Tool[] | undefined> {
+/** Pick one or more tools. All are pre-selected so the default is "act on all". */
+async function pickTools(
+  title: string,
+  candidates: Tool[] = TOOLS
+): Promise<Tool[] | undefined> {
   interface ToolItem extends vscode.QuickPickItem {
     tool: Tool;
   }
-  const items: ToolItem[] = TOOLS.map((t) => ({
+  const items: ToolItem[] = candidates.map((t) => ({
     label: TOOL_LABELS[t],
     tool: t,
     picked: true,
@@ -852,7 +953,7 @@ async function pickTools(title: string): Promise<Tool[] | undefined> {
   const picks = await vscode.window.showQuickPick(items, {
     title,
     canPickMany: true,
-    placeHolder: "Space to toggle, Enter to confirm (both selected by default)",
+    placeHolder: "Space to toggle, Enter to confirm (all selected by default)",
   });
   return picks?.map((p) => p.tool);
 }

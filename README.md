@@ -11,6 +11,8 @@ Each tool can point at one of:
 
 Save as many endpoints as you like and switch in one click. The status bar shows what's active and turns amber when a tool is on a custom endpoint, so you always know whether you're on your own account. Click it to switch, add, edit, view, test, or clean up.
 
+The switch menu lists only the tools you actually have (a config present on this machine, or one you've already set up), so it stays focused instead of showing every supported tool. To bring in another supported tool, pick **Add another tool…** at the bottom of the menu and set it up; it then stays in the list.
+
 > After switching, restart the tool for the change to take effect: close and reopen the CLI session in your terminal, or reload the window if you run it as a VS Code extension.
 
 > **Test connection:** when adding an endpoint (or from its view panel) you can probe it. The extension does a `GET <base URL>/v1/models` with your key and reports whether the endpoint is reachable and the key accepted.
@@ -20,7 +22,7 @@ Save as many endpoints as you like and switch in one click. The status bar shows
 | Tool   | Files touched | Gateway write | Switch back |
 |--------|---------------|---------------|---------|
 | Claude Code | `~/.claude/settings.json` | sets `env.ANTHROPIC_BASE_URL` + `env.ANTHROPIC_AUTH_TOKEN`; every other key preserved | removes those two keys, so Claude falls back to your keychain login |
-| Codex  | `~/.codex/config.toml`, `~/.codex/auth.json` | sets `model_provider` + `[model_providers.<name>]` and `auth.json` `OPENAI_API_KEY`; other tables preserved | restores your saved login when possible, otherwise clears the API key and prompts `codex login` |
+| Codex  | `~/.codex/config.toml`, `~/.codex/auth.json` | sets `model_provider` + `[model_providers.<name>]` with the key pinned as an `Authorization` header (not `env_key`, so a shell `OPENAI_API_KEY` can't shadow it); other tables preserved | restores your saved login when possible, otherwise clears the API key and prompts `codex login` |
 | Open Claw | `~/.openclaw/openclaw.json` (located on first use) | adds a `models.providers.<name>` block and points `agents.defaults.model.primary` at it; other keys preserved | restores your config verbatim from the backup |
 | Hermes Agent | `~/.hermes/cli-config.yaml`, `~/.hermes/.env` | sets `model.provider: custom` + `model.base_url`, writes `OPENAI_API_KEY` in `.env`; other keys preserved | restores both files verbatim from the backup |
 
@@ -31,12 +33,12 @@ Every write is preceded by a timestamped backup next to the file (`<file>.zion-b
 
 ## Commands
 
-- **Zion: Switch Login**: from the status bar or command palette. Pick where each tool connects, add a custom endpoint, or open Clean Up. Each saved endpoint has inline view / edit / delete buttons.
+- **Zion: Switch Login**: from the status bar or command palette. Pick where each tool connects, add a custom endpoint, add another tool, or open Clean Up. Each saved endpoint has inline view / edit / delete buttons.
 - **Zion: Add a Custom Endpoint**: save an endpoint (name, tool, base URL, token/key).
 - **Zion: Edit / Delete a Custom Endpoint**
 - **Zion: Update Backup of My Login**: save the current files as the new "Native login" backup. Use this if you installed the extension *after* your config already pointed at a gateway: set the files back to your own login first, then run it.
 - **Zion: Open Config Files**: quick-open the underlying files.
-- **Zion: Clean Up**: pick which tools to act on (Claude, Codex, or both), then choose. *Switch back to your own login* (keeps your saved endpoints), or *reset everything* (also erases saved endpoints, keys, and all backups, like a fresh install).
+- **Zion: Clean Up**: pick which of the tools you've set up to act on, then choose. *Switch back to your own login* (keeps your saved endpoints), or *reset everything* (also erases saved endpoints, keys, and all backups, like a fresh install).
 
 ## First run
 
