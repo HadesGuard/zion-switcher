@@ -24,7 +24,15 @@ export class CodexConfigManager {
   /**
    * Point Codex at a gateway:
    *  - config.toml: model_provider = <providerName>, upsert [model_providers.<providerName>]
+   *                 with the key pinned as a literal Authorization header
    *  - auth.json:   auth_mode = "apikey", OPENAI_API_KEY = <key> (other keys preserved)
+   *
+   * Auth is via the provider's http_headers, NOT env_key. With env_key =
+   * "OPENAI_API_KEY", Codex reads the key from the process env var of that name,
+   * so a user who exports OPENAI_API_KEY (very common) has their stale key shadow
+   * ours and every request 401s. Codex also does NOT read auth.json for a custom
+   * provider (only the built-in openai one), so a literal header is the only
+   * reliable, environment-independent channel.
    */
   applyGateway(providerName: string, displayName: string, baseUrl: string, key: string): void {
     const config = this.readToml();
@@ -38,15 +46,27 @@ export class CodexConfigManager {
       providers[providerName] && typeof providers[providerName] === "object"
         ? (providers[providerName] as Record<string, any>)
         : {};
-    providers[providerName] = {
+    const merged: Record<string, any> = {
       ...existing,
       name: displayName,
       base_url: baseUrl,
       wire_api: existing.wire_api ?? "responses",
+      http_headers: {
+        ...(existing.http_headers && typeof existing.http_headers === "object"
+          ? (existing.http_headers as Record<string, any>)
+          : {}),
+        Authorization: `Bearer ${key}`,
+      },
     };
+    // Strip any env_key written by an earlier version: leaving it would let an
+    // exported OPENAI_API_KEY shadow the header above and break auth.
+    delete merged.env_key;
+    providers[providerName] = merged;
     config.model_providers = providers;
     this.writeToml(config);
 
+    // Keep the api-key fields for the built-in openai provider path; the gateway
+    // provider authenticates via the header above. restoreNative cleans this up.
     const auth = this.readAuth();
     auth.auth_mode = "apikey";
     auth.OPENAI_API_KEY = key;
